@@ -88,4 +88,9 @@
   #include "defaults/defaults_simulator.h"
 #endif
 
+#ifdef DEFAULTS_COREXY
+  // Settings for CoreXY
+  #include "defaults/defaults_corexy.h"
+#endif
+
 #endif

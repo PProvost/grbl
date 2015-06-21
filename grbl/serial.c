@@ -54,7 +54,25 @@ uint8_t serial_get_tx_buffer_count()
   return (TX_BUFFER_SIZE - (ttail-serial_tx_buffer_head));
 }
 
+#ifdef __AVR_AT90USB1286__
+#include "usb_serial.h"
+void serial_init()
+{
+  usb_init();
+}
 
+void serial_write(uint8_t data)
+{
+  usb_serial_putchar(data);
+}
+
+uint8_t serial_read()
+{
+  return usb_serial_getchar();
+}
+
+#else
+    
 void serial_init()
 {
   // Set baud rate
@@ -189,7 +207,7 @@ ISR(SERIAL_RX)
       //TODO: else alarm on overflow?
   }
 }
-
+#endif // __AVR_AT90USB1286__
 
 void serial_reset_read_buffer() 
 {

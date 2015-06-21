@@ -183,9 +183,15 @@ static st_prep_t prep;
 void st_wake_up() 
 {
   // Enable stepper drivers.
-  if (bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE)) { STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); }
-  else { STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); }
-
+  #ifdef X_DISABLE_PORT
+    X_DISABLE_PORT &= ~(1<<X_DISABLE_BIT);
+    Y_DISABLE_PORT &= ~(1<<Y_DISABLE_BIT);
+    Z_DISABLE_PORT &= ~(1<<Z_DISABLE_BIT);
+  #else
+    if (bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE)) { STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); }
+    else { STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); }
+  #endif // X_DISABLE_PORT
+  
   if (sys.state & (STATE_CYCLE | STATE_HOMING)){
     // Initialize stepper output bits
     st.dir_outbits = dir_port_invert_mask; 
@@ -225,8 +231,23 @@ void st_go_idle()
     pin_state = true; // Override. Disable steppers.
   }
   if (bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE)) { pin_state = !pin_state; } // Apply pin invert.
-  if (pin_state) { STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); }
-  else { STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); }
+  if (pin_state) { 
+    #ifdef X_DISABLE_PORT
+      X_DISABLE_PORT |= (1<<X_DISABLE_BIT);
+      Y_DISABLE_PORT |= (1<<Y_DISABLE_BIT);
+      Z_DISABLE_PORT |= (1<<Z_DISABLE_BIT);
+    #else
+      STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); 
+    #endif // X_DISABLE_PORT
+  } else { 
+    #ifdef X_DISABLE_PORT
+      X_DISABLE_PORT |= (1<<X_DISABLE_BIT);
+      Y_DISABLE_PORT |= (1<<Y_DISABLE_BIT);
+      Z_DISABLE_PORT |= (1<<Z_DISABLE_BIT);
+    #else
+      STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); 
+    #endif // X_DISABLE_PORT
+  }
 }
 
 
@@ -473,7 +494,13 @@ void stepper_init()
 {
   // Configure step and direction interface pins
   STEP_DDR |= STEP_MASK;
-  STEPPERS_DISABLE_DDR |= 1<<STEPPERS_DISABLE_BIT;
+  #ifdef X_DISABLE_DDR
+    X_DISABLE_DDR |= 1<<X_DISABLE_BIT;
+    Y_DISABLE_DDR |= 1<<Y_DISABLE_BIT;
+    Z_DISABLE_DDR |= 1<<Z_DISABLE_BIT;
+  #else
+    STEPPERS_DISABLE_DDR |= 1<<STEPPERS_DISABLE_BIT;
+  #endif // X_DISABLE_DDR
   DIRECTION_DDR |= DIRECTION_MASK;
 
   // Configure Timer 1: Stepper Driver Interrupt
