@@ -86,35 +86,35 @@
 #define LIMIT_MASK ((1<<X_LIMIT_BIT)|(1<<Y_LIMIT_BIT)|(1<<Z_LIMIT_BIT)) // All limit bits
 
 // Define spindle enable and spindle direction output pins.
-#define SPINDLE_ENABLE_DDR      DDRB
-#define SPINDLE_ENABLE_PORT     PORTB
+#define SPINDLE_ENABLE_DDR      DDRC
+#define SPINDLE_ENABLE_PORT     PORTC
 #define SPINDLE_ENABLE_BIT      4
-#define SPINDLE_DIRECTION_DDR   DDRB
-#define SPINDLE_DIRECTION_PORT  PORTB
+#define SPINDLE_DIRECTION_DDR   DDRC
+#define SPINDLE_DIRECTION_PORT  PORTC
 #define SPINDLE_DIRECTION_BIT   5
 
 // Define flood and mist coolant enable output pins.
 // NOTE: Uno analog pins 4 and 5 are reserved for an i2c interface, and may be installed at
 // a later date if flash and memory space allows.
-#define COOLANT_FLOOD_DDR     DDRB  // FIXME
-#define COOLANT_FLOOD_PORT    PORTB // FIXME
-#define COOLANT_FLOOD_BIT     5     // FIXME
+#define COOLANT_FLOOD_DDR     DDRC 
+#define COOLANT_FLOOD_PORT    PORTC
+#define COOLANT_FLOOD_BIT     5    
 #ifdef ENABLE_M7 // Mist coolant disabled by default. See config.h to enable/disable.
 #define COOLANT_MIST_DDR    DDRB    // FIXME
 #define COOLANT_MIST_PORT   PORTB   // FIXME
-#define COOLANT_MIST_BIT    6 // MEGA2560 Digital Pin 9
+#define COOLANT_MIST_BIT    6
 #endif  
 
 // Define user-control CONTROLs (cycle start, reset, feed hold) input pins.
 // NOTE: All CONTROLs pins must be on the same port and not on a port with other input pins (limits).
 /*
-#define CONTROL_DDR       DDRB  // FIXME
-#define CONTROL_PIN       PINB  // FIXME
-#define CONTROL_PORT      PORTB  // FIXME
-#define RESET_BIT         0  // MEGA2560 Analog Pin 8
-#define FEED_HOLD_BIT     1  // MEGA2560 Analog Pin 9
-#define CYCLE_START_BIT   2  // MEGA2560 Analog Pin 10
-#define SAFETY_DOOR_BIT   3  // MEGA2560 Analog Pin 11
+#define CONTROL_DDR       DDRC  // FIXME
+#define CONTROL_PIN       PINC  // FIXME
+#define CONTROL_PORT      PORTC  // FIXME
+#define RESET_BIT         6
+#define FEED_HOLD_BIT     6
+#define CYCLE_START_BIT   6
+#define SAFETY_DOOR_BIT   6
 #define CONTROL_INT       PCIE0  // Pin change interrupt enable pin
 #define CONTROL_INT_vect  PCINT1_vect
 #define CONTROL_PCMSK     PCMSK0 // Pin change interrupt register
@@ -122,10 +122,10 @@
 */
 
 // Define probe switch input pin.
-#define PROBE_DDR       DDRB  // FIXME
-#define PROBE_PIN       PINB  // FIXME
-#define PROBE_PORT      PORTB  // FIXME
-#define PROBE_BIT       7  // MEGA2560 Analog Pin 15
+#define PROBE_DDR       DDRD  
+#define PROBE_PIN       PIND  
+#define PROBE_PORT      PORTD  
+#define PROBE_BIT       6
 #define PROBE_MASK      (1<<PROBE_BIT)
 
 // Start of PWM & Stepper Enabled Spindle

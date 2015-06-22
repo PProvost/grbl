@@ -183,14 +183,23 @@ static st_prep_t prep;
 void st_wake_up() 
 {
   // Enable stepper drivers.
-  #ifdef X_DISABLE_PORT
-    X_DISABLE_PORT &= ~(1<<X_DISABLE_BIT);
-    Y_DISABLE_PORT &= ~(1<<Y_DISABLE_BIT);
-    Z_DISABLE_PORT &= ~(1<<Z_DISABLE_BIT);
-  #else
-    if (bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE)) { STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); }
-    else { STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); }
-  #endif // X_DISABLE_PORT
+    if (bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE)) { 
+      #ifdef X_DISABLE_PORT
+        X_DISABLE_PORT |= (1<<X_DISABLE_BIT);
+        Y_DISABLE_PORT |= (1<<Y_DISABLE_BIT);
+        Z_DISABLE_PORT |= (1<<Z_DISABLE_BIT);
+      #else
+        STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); 
+      #endif // X_DISABLE_PORT
+    } else { 
+      #ifdef X_DISABLE_PORT
+        X_DISABLE_PORT &= ~(1<<X_DISABLE_BIT);
+        Y_DISABLE_PORT &= ~(1<<Y_DISABLE_BIT);
+        Z_DISABLE_PORT &= ~(1<<Z_DISABLE_BIT);
+      #else
+        STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); 
+      #endif // X_DISABLE_PORT
+    }
   
   if (sys.state & (STATE_CYCLE | STATE_HOMING)){
     // Initialize stepper output bits
@@ -241,9 +250,9 @@ void st_go_idle()
     #endif // X_DISABLE_PORT
   } else { 
     #ifdef X_DISABLE_PORT
-      X_DISABLE_PORT |= (1<<X_DISABLE_BIT);
-      Y_DISABLE_PORT |= (1<<Y_DISABLE_BIT);
-      Z_DISABLE_PORT |= (1<<Z_DISABLE_BIT);
+      X_DISABLE_PORT &= ~(1<<X_DISABLE_BIT);
+      Y_DISABLE_PORT &= ~(1<<Y_DISABLE_BIT);
+      Z_DISABLE_PORT &= ~(1<<Z_DISABLE_BIT);
     #else
       STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); 
     #endif // X_DISABLE_PORT
