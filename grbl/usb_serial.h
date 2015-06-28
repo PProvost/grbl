@@ -6,6 +6,7 @@
 // setup
 void usb_init(void);			// initialize everything
 uint8_t usb_configured(void);		// is the USB port configured
+uint8_t usb_suspend(void);		// is the USB port suspended
 
 // receiving data
 int16_t usb_serial_getchar(void);	// receive a character (-1 if timeout/error)
@@ -120,5 +121,8 @@ int8_t usb_serial_set_control(uint8_t signals); // set DSR, DCD, RI, etc
 #define CDC_SET_LINE_CODING		0x20
 #define CDC_GET_LINE_CODING		0x21
 #define CDC_SET_CONTROL_LINE_STATE	0x22
+
+#define USBSTATE __attribute__ ((section (".noinit")))
+
 #endif
 #endif

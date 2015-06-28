@@ -55,10 +55,37 @@ uint8_t serial_get_tx_buffer_count()
 }
 
 #ifdef __AVR_AT90USB1286__
-#include "usb_serial.h"
 void serial_init()
 {
   usb_init();
+  uint16_t loop = 0;
+  while (1) {
+    // wait for the host to finish enumeration
+    if (usb_configured()) {
+      delay_ms(200);  // a little time for host to load a driver
+      return;
+    }
+    // or for suspend mode (powered without USB)
+    if (usb_suspend()) {
+      uint16_t begin_suspend = 0;
+      while (usb_suspend()) {
+        // must remain suspended for a while, because
+        // normal USB enumeration causes brief suspend
+        // states, typically under 0.1 second
+        if (begin_suspend > 250) {
+          return;
+        }
+        begin_suspend += 1;
+        delay_ms(1);
+      }
+    }
+    // ... or a timout (powered by a USB power adaptor that
+    // wiggles the data lines to keep a USB device charging)
+    if (loop > 2500) return;
+    
+    loop += 1;
+    delay_ms(1);
+  } 
 }
 
 void serial_write(uint8_t data)
@@ -89,10 +116,10 @@ void serial_init()
   // enable rx and tx
   UCSR0B |= 1<<RXEN0;
   UCSR0B |= 1<<TXEN0;
-	
+  
   // enable interrupt on complete reception of a byte
   UCSR0B |= 1<<RXCIE0;
-	  
+    
   // defaults to 8-bit, no parity, 1 stop bit
 }
 
