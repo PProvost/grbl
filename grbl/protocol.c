@@ -21,6 +21,10 @@
 
 #include "grbl.h"
 
+#ifdef __AVR_AT90USB1286__
+  #include "usb_serial.h"
+#endif // __AVR_AT90USB1286__
+
 // Define different comment types for pre-parsing.
 #define COMMENT_NONE 0
 #define COMMENT_TYPE_PARENTHESES 1
@@ -163,8 +167,12 @@ void protocol_main_loop()
     protocol_auto_cycle_start();
 
     protocol_execute_realtime();  // Runtime command check point.
+
+    #ifdef __AVR_AT90USB1286__
+      if (!(usb_serial_get_control() & USB_SERIAL_DTR)) sys.abort = true;
+    #endif // __AVR_AT90USB1286__
+
     if (sys.abort) { return; } // Bail to main() program loop to reset system.
-              
   }
   
   return; /* Never reached */

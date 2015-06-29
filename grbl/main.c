@@ -21,6 +21,9 @@
 
 #include "grbl.h"
 
+#ifdef __AVR_AT90USB1286__
+  #include "usb_serial.h"
+#endif // __AVR_AT90USB1286__
 
 // Declare system global variable structure
 system_t sys; 
@@ -58,9 +61,16 @@ int main(void)
   // will return to this loop to be cleanly re-initialized.
   for(;;) {
 
+    #ifdef __AVR_AT90USB1286__
+      while (!usb_configured()) /* wait */ ;
+      delay_ms(200);
+
+      while (!(usb_serial_get_control() & USB_SERIAL_DTR)) /* wait */ ;
+    #endif // __AVR_AT90USB1286__
+
     // TODO: Separate configure task that require interrupts to be disabled, especially upon
     // a system abort and ensuring any active interrupts are cleanly reset.
-  
+
     // Reset Grbl primary systems.
     serial_reset_read_buffer(); // Clear serial read buffer
     gc_init(); // Set g-code parser to default state

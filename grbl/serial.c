@@ -58,34 +58,6 @@ uint8_t serial_get_tx_buffer_count()
 void serial_init()
 {
   usb_init();
-  uint16_t loop = 0;
-  while (1) {
-    // wait for the host to finish enumeration
-    if (usb_configured()) {
-      delay_ms(200);  // a little time for host to load a driver
-      return;
-    }
-    // or for suspend mode (powered without USB)
-    if (usb_suspend()) {
-      uint16_t begin_suspend = 0;
-      while (usb_suspend()) {
-        // must remain suspended for a while, because
-        // normal USB enumeration causes brief suspend
-        // states, typically under 0.1 second
-        if (begin_suspend > 250) {
-          return;
-        }
-        begin_suspend += 1;
-        delay_ms(1);
-      }
-    }
-    // ... or a timout (powered by a USB power adaptor that
-    // wiggles the data lines to keep a USB device charging)
-    if (loop > 2500) return;
-    
-    loop += 1;
-    delay_ms(1);
-  } 
 }
 
 void serial_write(uint8_t data)
@@ -95,7 +67,22 @@ void serial_write(uint8_t data)
 
 uint8_t serial_read()
 {
-  return usb_serial_getchar();
+  uint8_t data = usb_serial_getchar();
+
+  switch (data) {
+    case CMD_STATUS_REPORT: bit_true_atomic(sys.rt_exec_state, EXEC_STATUS_REPORT); data = SERIAL_NO_DATA; break; // Set as true
+    // case CMD_CYCLE_START:   bit_true_atomic(sys.rt_exec_state, EXEC_CYCLE_START); data = SERIAL_NO_DATA; break; // Set as true
+    // case CMD_FEED_HOLD:     bit_true_atomic(sys.rt_exec_state, EXEC_FEED_HOLD); data = SERIAL_NO_DATA; break; // Set as true
+    // case CMD_SAFETY_DOOR:   bit_true_atomic(sys.rt_exec_state, EXEC_SAFETY_DOOR); data = SERIAL_NO_DATA; break; // Set as true
+    // case CMD_RESET:         mc_reset(); data = SERIAL_NO_DATA; break; // Call motion control reset routine.
+  }
+  
+  return data;
+}
+
+void serial_reset_read_buffer() 
+{
+  usb_serial_flush_input();
 }
 
 #else
@@ -234,7 +221,6 @@ ISR(SERIAL_RX)
       //TODO: else alarm on overflow?
   }
 }
-#endif // __AVR_AT90USB1286__
 
 void serial_reset_read_buffer() 
 {
@@ -244,3 +230,4 @@ void serial_reset_read_buffer()
     flow_ctrl = XON_SENT;
   #endif
 }
+#endif // __AVR_AT90USB1286__
