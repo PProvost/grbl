@@ -70,10 +70,10 @@ uint8_t serial_read()
   uint8_t data = usb_serial_getchar();
 
   switch (data) {
-    case CMD_STATUS_REPORT: bit_true_atomic(sys.rt_exec_state, EXEC_STATUS_REPORT); data = SERIAL_NO_DATA; break; // Set as true
-    // case CMD_CYCLE_START:   bit_true_atomic(sys.rt_exec_state, EXEC_CYCLE_START); data = SERIAL_NO_DATA; break; // Set as true
-    // case CMD_FEED_HOLD:     bit_true_atomic(sys.rt_exec_state, EXEC_FEED_HOLD); data = SERIAL_NO_DATA; break; // Set as true
-    // case CMD_SAFETY_DOOR:   bit_true_atomic(sys.rt_exec_state, EXEC_SAFETY_DOOR); data = SERIAL_NO_DATA; break; // Set as true
+    case CMD_STATUS_REPORT: bit_true_atomic(sys_rt_exec_state, EXEC_STATUS_REPORT); data = SERIAL_NO_DATA; break; // Set as true
+    // case CMD_CYCLE_START:   bit_true_atomic(sys_rt_exec_state, EXEC_CYCLE_START); data = SERIAL_NO_DATA; break; // Set as true
+    // case CMD_FEED_HOLD:     bit_true_atomic(sys_rt_exec_state, EXEC_FEED_HOLD); data = SERIAL_NO_DATA; break; // Set as true
+    // case CMD_SAFETY_DOOR:   bit_true_atomic(sys_rt_exec_state, EXEC_SAFETY_DOOR); data = SERIAL_NO_DATA; break; // Set as true
     // case CMD_RESET:         mc_reset(); data = SERIAL_NO_DATA; break; // Call motion control reset routine.
   }
   
