@@ -65,9 +65,9 @@
 #define X_DISABLE_DDR      DDRE
 #define X_DISABLE_PORT     PORTE
 #define X_DISABLE_BIT      7
-#define Y_DISABLE_DDR      DDRB
-#define Y_DISABLE_PORT     PORTB
-#define Y_DISABLE_BIT      0
+#define Y_DISABLE_DDR      DDRE
+#define Y_DISABLE_PORT     PORTE
+#define Y_DISABLE_BIT      6
 #define Z_DISABLE_DDR      DDRC
 #define Z_DISABLE_PORT     PORTC
 #define Z_DISABLE_BIT      7
