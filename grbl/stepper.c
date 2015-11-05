@@ -29,6 +29,10 @@
 #define RAMP_CRUISE 1
 #define RAMP_DECEL 2
 
+#define PREP_FLAG_RECALCULATE bit(0)
+#define PREP_FLAG_HOLD_PARTIAL_BLOCK bit(1)
+#define PREP_FLAG_PARKING bit(2)
+
 // Define Adaptive Multi-Axis Step-Smoothing(AMASS) levels and cutoff frequencies. The highest level
 // frequency bin starts at 0Hz and ends at its cutoff frequency. The next lower level frequency bin
 // starts at the next higher cutoff frequency, and so on. The cutoff frequencies for each level must
@@ -120,13 +124,20 @@ static st_block_t *st_prep_block;  // Pointer to the stepper block data being pr
 // based on the current executing planner block.
 typedef struct {
   uint8_t st_block_index;  // Index of stepper common data block being prepped
-  uint8_t flag_partial_block;  // Flag indicating the last block completed. Time to load a new one.
+  uint8_t recalculate_flag;
 
-  float steps_remaining;
-  float step_per_mm;           // Current planner block step/millimeter conversion scalar
-  float req_mm_increment;
   float dt_remainder;
+  float steps_remaining;
+  float step_per_mm;
+  float req_mm_increment;
   
+  #ifdef PARKING_ENABLE
+    uint8_t last_st_block_index;
+    float last_steps_remaining;
+    float last_step_per_mm;
+    float last_dt_remainder;
+  #endif
+
   uint8_t ramp_type;      // Current segment ramp state
   float mm_complete;      // End of velocity profile from end of current planner block in (mm).
                           // NOTE: This value must coincide with a step(no mantissa) when converted.
@@ -201,7 +212,7 @@ void st_wake_up()
       #endif // X_DISABLE_PORT
     }
   
-  if (sys.state & (STATE_CYCLE | STATE_HOMING)){
+//   if (sys.state & (STATE_CYCLE | STATE_HOMING)){
     // Initialize stepper output bits
     st.dir_outbits = dir_port_invert_mask; 
     st.step_outbits = step_port_invert_mask;
@@ -219,8 +230,8 @@ void st_wake_up()
 
     // Enable Stepper Driver Interrupt
     TIMSK1 |= (1<<OCIE1A);
+//   }
   }
-}
 
 
 // Stepper shutdown
@@ -233,7 +244,7 @@ void st_go_idle()
   
   // Set stepper driver idle state, disabled or enabled, depending on settings and circumstances.
   bool pin_state = false; // Keep enabled.
-  if (((settings.stepper_idle_lock_time != 0xff) || sys.rt_exec_alarm) && sys.state != STATE_HOMING) {
+  if (((settings.stepper_idle_lock_time != 0xff) || sys_rt_exec_alarm) && sys.state != STATE_HOMING) {
     // Force stepper dwell to lock axes for a defined amount of time to ensure the axes come to a complete
     // stop and not drift from residual inertial forces at the end of the last movement.
     delay_ms(settings.stepper_idle_lock_time);
@@ -368,7 +379,7 @@ ISR(TIMER1_COMPA_vect)
     } else {
       // Segment buffer empty. Shutdown.
       st_go_idle();
-      bit_true_atomic(sys.rt_exec_state,EXEC_CYCLE_STOP); // Flag main program for cycle end
+      bit_true_atomic(sys_rt_exec_state,EXEC_CYCLE_STOP); // Flag main program for cycle end
       return; // Nothing to do but exit.
     }  
   }
@@ -535,11 +546,59 @@ void stepper_init()
 void st_update_plan_block_parameters()
 { 
   if (pl_block != NULL) { // Ignore if at start of a new block.
-    prep.flag_partial_block = true;
+    prep.recalculate_flag |= PREP_FLAG_RECALCULATE;
     pl_block->entry_speed_sqr = prep.current_speed*prep.current_speed; // Update entry speed.
-    pl_block = NULL; // Flag st_prep_segment() to load new velocity profile.
+    pl_block = NULL; // Flag st_prep_segment() to load and check active velocity profile.
   }
 }
+
+
+// Increments the step segment buffer block data ring buffer.
+static uint8_t st_next_block_index(uint8_t block_index)
+{
+  block_index++;
+  if ( block_index == (SEGMENT_BUFFER_SIZE-1) ) { return(0); }
+  return(block_index);
+}
+
+
+#ifdef PARKING_ENABLE
+  // Changes the run state of the step segment buffer to execute the special parking motion.
+  void st_parking_setup_buffer()
+  {
+    // Store step execution data of partially completed block, if necessary.
+    if (prep.recalculate_flag & PREP_FLAG_HOLD_PARTIAL_BLOCK) {
+      prep.last_st_block_index = prep.st_block_index;
+      prep.last_steps_remaining = prep.steps_remaining;
+      prep.last_dt_remainder = prep.dt_remainder;
+      prep.last_step_per_mm = prep.step_per_mm;
+    }
+    // Set flags to execute a parking motion
+    prep.recalculate_flag |= PREP_FLAG_PARKING;
+    prep.recalculate_flag &= ~(PREP_FLAG_RECALCULATE);
+    pl_block = NULL; // Always reset parking motion to reload new block.
+  }
+
+
+  // Restores the step segment buffer to the normal run state after a parking motion.
+  // NOTE: This function does not compile if parking is disabled.
+  void st_parking_restore_buffer()
+  {   
+    // Restore step execution data and flags of partially completed block, if necessary. 
+    if (prep.recalculate_flag & PREP_FLAG_HOLD_PARTIAL_BLOCK) {
+      st_prep_block = &st_block_buffer[prep.last_st_block_index];
+      prep.st_block_index = prep.last_st_block_index;
+      prep.steps_remaining = prep.last_steps_remaining;
+      prep.dt_remainder = prep.last_dt_remainder;
+      prep.step_per_mm = prep.last_step_per_mm;
+      prep.recalculate_flag = (PREP_FLAG_HOLD_PARTIAL_BLOCK | PREP_FLAG_RECALCULATE);
+      prep.req_mm_increment = REQ_MM_INCREMENT_SCALAR/prep.step_per_mm; // Recompute this value.
+    } else {
+      prep.recalculate_flag = false;
+    }
+    pl_block = NULL; // Set to reload next block.
+  }
+#endif
 
 
 /* Prepares step segment buffer. Continuously called from main program. 
@@ -557,60 +616,77 @@ void st_update_plan_block_parameters()
 */
 void st_prep_buffer()
 {
+  // Block step prep buffer, while in a suspend state and there is no suspend motion to execute.
+  if (bit_istrue(sys.step_control,STEP_CONTROL_END_MOTION)) { return; }
 
-  if (sys.state & (STATE_HOLD|STATE_MOTION_CANCEL|STATE_SAFETY_DOOR)) { 
-    // Check if we still need to generate more segments for a motion suspend.
-    if (prep.current_speed == 0.0) { return; } // Nothing to do. Bail.
-  }
-  
   while (segment_buffer_tail != segment_next_head) { // Check if we need to fill the buffer.
 
-    // Determine if we need to load a new planner block or if the block has been replanned. 
+    // Determine if we need to load a new planner block or if the block needs to be recomputed.
     if (pl_block == NULL) {
-      pl_block = plan_get_current_block(); // Query planner for a queued block
+
+      #ifdef PARKING_ENABLE
+      
+        // Query planner for a queued block
+        if (sys.step_control & STEP_CONTROL_EXECUTE_PARK) { pl_block = plan_get_parking_block(); }
+        else { pl_block = plan_get_current_block(); }
       if (pl_block == NULL) { return; } // No planner blocks. Exit.
                       
-      // Check if the segment buffer completed the last planner block. If so, load the Bresenham
-      // data for the block. If not, we are still mid-block and the velocity profile was updated. 
-      if (prep.flag_partial_block) {
-        prep.flag_partial_block = false; // Reset flag
+        // Check if we need to only recompute the velocity profile or load a new block.
+        if (prep.recalculate_flag & PREP_FLAG_RECALCULATE) {
+
+          if (prep.recalculate_flag & PREP_FLAG_PARKING) { prep.recalculate_flag &= ~(PREP_FLAG_RECALCULATE); }
+          else { prep.recalculate_flag = false; }
+
       } else {
-        // Increment stepper common data index to store new planner block data. 
-        if ( ++prep.st_block_index == (SEGMENT_BUFFER_SIZE-1) ) { prep.st_block_index = 0; }
         
+      #else
+      
+        // Query planner for a queued block
+        pl_block = plan_get_current_block();
+        if (pl_block == NULL) { return; } // No planner blocks. Exit.
+
+        // Check if we need to only recompute the velocity profile or load a new block.
+        if (prep.recalculate_flag & PREP_FLAG_RECALCULATE) {
+
+          prep.recalculate_flag = false;
+        
+        } else {
+	      
+      #endif
+              
+        // Load the Bresenham stepping data for the block.
+        prep.st_block_index = st_next_block_index(prep.st_block_index);
+    
         // Prepare and copy Bresenham algorithm segment data from the new planner block, so that
         // when the segment buffer completes the planner block, it may be discarded when the 
         // segment buffer finishes the prepped block, but the stepper ISR is still executing it. 
         st_prep_block = &st_block_buffer[prep.st_block_index];
         st_prep_block->direction_bits = pl_block->direction_bits;
+        uint8_t idx;
         #ifndef ADAPTIVE_MULTI_AXIS_STEP_SMOOTHING
-          st_prep_block->steps[X_AXIS] = pl_block->steps[X_AXIS];
-          st_prep_block->steps[Y_AXIS] = pl_block->steps[Y_AXIS];
-          st_prep_block->steps[Z_AXIS] = pl_block->steps[Z_AXIS];
+          for (idx=0; idx<N_AXIS; idx++) { st_prep_block->steps[idx] = pl_block->steps[idx]; }
           st_prep_block->step_event_count = pl_block->step_event_count;
         #else
           // With AMASS enabled, simply bit-shift multiply all Bresenham data by the max AMASS 
           // level, such that we never divide beyond the original data anywhere in the algorithm.
           // If the original data is divided, we can lose a step from integer roundoff.
-          st_prep_block->steps[X_AXIS] = pl_block->steps[X_AXIS] << MAX_AMASS_LEVEL;
-          st_prep_block->steps[Y_AXIS] = pl_block->steps[Y_AXIS] << MAX_AMASS_LEVEL;
-          st_prep_block->steps[Z_AXIS] = pl_block->steps[Z_AXIS] << MAX_AMASS_LEVEL;
+          for (idx=0; idx<N_AXIS; idx++) { st_prep_block->steps[idx] = pl_block->steps[idx] << MAX_AMASS_LEVEL; }
           st_prep_block->step_event_count = pl_block->step_event_count << MAX_AMASS_LEVEL;
         #endif
         
         // Initialize segment buffer data for generating the segments.
-        prep.steps_remaining = pl_block->step_event_count;
+        prep.steps_remaining = (float)pl_block->step_event_count;
         prep.step_per_mm = prep.steps_remaining/pl_block->millimeters;
         prep.req_mm_increment = REQ_MM_INCREMENT_SCALAR/prep.step_per_mm;
+        prep.dt_remainder = 0.0; // Reset for new segment block
         
-        prep.dt_remainder = 0.0; // Reset for new planner block
-
-        if (sys.state & (STATE_HOLD|STATE_MOTION_CANCEL|STATE_SAFETY_DOOR)) {
-          // Override planner block entry speed and enforce deceleration during feed hold.
+        if (sys.step_control & STEP_CONTROL_EXECUTE_HOLD) {
+          // New block loaded mid-hold. Override planner block entry speed to enforce deceleration.
           prep.current_speed = prep.exit_speed; 
           pl_block->entry_speed_sqr = prep.exit_speed*prep.exit_speed; 
+        } else { 
+          prep.current_speed = sqrt(pl_block->entry_speed_sqr); 
         }
-        else { prep.current_speed = sqrt(pl_block->entry_speed_sqr); }
       }
      
       /* --------------------------------------------------------------------------------- 
@@ -621,7 +697,7 @@ void st_prep_buffer()
       */
       prep.mm_complete = 0.0; // Default velocity profile complete at 0.0mm from end of block.
       float inv_2_accel = 0.5/pl_block->acceleration;
-      if (sys.state & (STATE_HOLD|STATE_MOTION_CANCEL|STATE_SAFETY_DOOR)) { // [Forced Deceleration to Zero Velocity]
+			if (sys.step_control & STEP_CONTROL_EXECUTE_HOLD) { // [Forced Deceleration to Zero Velocity]
         // Compute velocity profile parameters for a feed hold in-progress. This profile overrides
         // the planner block profile, enforcing a deceleration to zero speed.
         prep.ramp_type = RAMP_DECEL;
@@ -638,7 +714,14 @@ void st_prep_buffer()
         // Compute or recompute velocity profile parameters of the prepped planner block.
         prep.ramp_type = RAMP_ACCEL; // Initialize as acceleration ramp.
         prep.accelerate_until = pl_block->millimeters; 
+
+				#ifdef PARKING_ENABLE
+					if (sys.step_control & STEP_CONTROL_EXECUTE_PARK) { prep.exit_speed = 0.0; }
+					else { prep.exit_speed = plan_get_exec_block_exit_speed(); }
+				#else
         prep.exit_speed = plan_get_exec_block_exit_speed();   
+				#endif
+
         float exit_speed_sqr = prep.exit_speed*prep.exit_speed;
         float intersect_distance =
                 0.5*(pl_block->millimeters+inv_2_accel*(pl_block->entry_speed_sqr-exit_speed_sqr));
@@ -663,7 +746,7 @@ void st_prep_buffer()
           } else { // Deceleration-only type
             prep.ramp_type = RAMP_DECEL;
             // prep.decelerate_after = pl_block->millimeters;
-            prep.maximum_speed = prep.current_speed;
+						// prep.maximum_speed = prep.current_speed;
           }
         } else { // Acceleration-only type
           prep.accelerate_until = 0.0;
@@ -739,14 +822,16 @@ void st_prep_buffer()
           if (prep.current_speed > speed_var) { // Check if at or below zero speed.
             // Compute distance from end of segment to end of block.
             mm_var = mm_remaining - time_var*(prep.current_speed - 0.5*speed_var); // (mm)
-            if (mm_var > prep.mm_complete) { // Deceleration only.
+            if (mm_var > prep.mm_complete) { // Typical case. In deceleration ramp.
               mm_remaining = mm_var;
               prep.current_speed -= speed_var;
               break; // Segment complete. Exit switch-case statement. Continue do-while loop.
             }
-          } // End of block or end of forced-deceleration.
+          }
+          // Otherwise, at end of block or end of forced-deceleration.
           time_var = 2.0*(mm_remaining-prep.mm_complete)/(prep.current_speed+prep.exit_speed);
           mm_remaining = prep.mm_complete; 
+          prep.current_speed = prep.exit_speed;
       }
       dt += time_var; // Add computed ramp time to total segment time.
       if (dt < dt_max) { time_var = dt_max - dt; } // **Incomplete** At ramp junction.
@@ -773,21 +858,20 @@ void st_prep_buffer()
        Fortunately, this scenario is highly unlikely and unrealistic in CNC machines
        supported by Grbl (i.e. exceeding 10 meters axis travel at 200 step/mm).
     */
-    float steps_remaining = prep.step_per_mm*mm_remaining; // Convert mm_remaining to steps
-    float n_steps_remaining = ceil(steps_remaining); // Round-up current steps remaining
+    float step_dist_remaining = prep.step_per_mm*mm_remaining; // Convert mm_remaining to steps
+    float n_steps_remaining = ceil(step_dist_remaining); // Round-up current steps remaining
     float last_n_steps_remaining = ceil(prep.steps_remaining); // Round-up last steps remaining
     prep_segment->n_step = last_n_steps_remaining-n_steps_remaining; // Compute number of steps to execute.
     
     // Bail if we are at the end of a feed hold and don't have a step to execute.
     if (prep_segment->n_step == 0) {
-      if (sys.state & (STATE_HOLD|STATE_MOTION_CANCEL|STATE_SAFETY_DOOR)) {
+      if (sys.step_control & STEP_CONTROL_EXECUTE_HOLD) {
         // Less than one step to decelerate to zero speed, but already very close. AMASS 
         // requires full steps to execute. So, just bail.
-        prep.current_speed = 0.0; // NOTE: (=0.0) Used to indicate completed segment calcs for hold.
-        prep.dt_remainder = 0.0;
-        prep.steps_remaining = n_steps_remaining;
-        pl_block->millimeters = prep.steps_remaining/prep.step_per_mm; // Update with full steps.
-        plan_cycle_reinitialize();         
+        bit_true(sys.step_control,STEP_CONTROL_END_MOTION);
+        #ifdef PARKING_ENABLE
+          if (!(prep.recalculate_flag & PREP_FLAG_PARKING)) { prep.recalculate_flag |= PREP_FLAG_HOLD_PARTIAL_BLOCK; }        
+        #endif
         return; // Segment not generated, but current step data still retained.
       }
     }
@@ -801,8 +885,7 @@ void st_prep_buffer()
     // typically very small and do not adversely effect performance, but ensures that Grbl
     // outputs the exact acceleration and velocity profiles as computed by the planner.
     dt += prep.dt_remainder; // Apply previous segment partial step execute time
-    float inv_rate = dt/(last_n_steps_remaining - steps_remaining); // Compute adjusted step rate inverse
-    prep.dt_remainder = (n_steps_remaining - steps_remaining)*inv_rate; // Update segment partial step time
+    float inv_rate = dt/(last_n_steps_remaining - step_dist_remaining); // Compute adjusted step rate inverse
 
     // Compute CPU cycles per step for the prepped segment.
     uint32_t cycles = ceil( (TICKS_PER_MICROSECOND*1000000*60)*inv_rate ); // (cycles/step)    
@@ -838,29 +921,35 @@ void st_prep_buffer()
       }
     #endif
 
-    // Segment complete! Increment segment buffer indices.
+    // Segment complete! Increment segment buffer indices, so stepper ISR can immediately execute it.
     segment_buffer_head = segment_next_head;
     if ( ++segment_next_head == SEGMENT_BUFFER_SIZE ) { segment_next_head = 0; }
 
-    // Setup initial conditions for next segment.
-    if (mm_remaining > prep.mm_complete) { 
-      // Normal operation. Block incomplete. Distance remaining in block to be executed.
+    // Update the appropriate planner and segment data.
       pl_block->millimeters = mm_remaining;      
-      prep.steps_remaining = steps_remaining;  
-    } else { 
+    prep.steps_remaining = n_steps_remaining;
+    prep.dt_remainder = (n_steps_remaining - step_dist_remaining)*inv_rate;
+    
+    // Check for exit conditions and flag to load next planner block.
+    if (mm_remaining == prep.mm_complete) { 
       // End of planner block or forced-termination. No more distance to be executed.
       if (mm_remaining > 0.0) { // At end of forced-termination.
         // Reset prep parameters for resuming and then bail. Allow the stepper ISR to complete
         // the segment queue, where realtime protocol will set new state upon receiving the 
         // cycle stop flag from the ISR. Prep_segment is blocked until then.
-        prep.current_speed = 0.0; // NOTE: (=0.0) Used to indicate completed segment calcs for hold.
-        prep.dt_remainder = 0.0;
-        prep.steps_remaining = ceil(steps_remaining);
-        pl_block->millimeters = prep.steps_remaining/prep.step_per_mm; // Update with full steps.
-        plan_cycle_reinitialize(); 
+        bit_true(sys.step_control,STEP_CONTROL_END_MOTION);
+        #ifdef PARKING_ENABLE
+          if (!(prep.recalculate_flag & PREP_FLAG_PARKING)) { prep.recalculate_flag |= PREP_FLAG_HOLD_PARTIAL_BLOCK; }
+        #endif
         return; // Bail!
       } else { // End of planner block
         // The planner block is complete. All steps are set to be executed in the segment buffer.
+        #ifdef PARKING_ENABLE
+          if (sys.step_control & STEP_CONTROL_EXECUTE_PARK) { 
+            bit_true(sys.step_control,STEP_CONTROL_END_MOTION);
+            return; 
+          }
+        #endif
         pl_block = NULL; // Set pointer to indicate check and load next planner block.
         plan_discard_current_block();
       }
